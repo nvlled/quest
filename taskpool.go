@@ -34,4 +34,4 @@ func (taskPool *TaskPool[T]) Free(item Task[T]) {
 	taskPool.syncPool.Put(item)
 }
 
-var DefaultTaskPool = NewTaskPool[any](100)
+var defaultTaskPool = NewTaskPool[any](100)

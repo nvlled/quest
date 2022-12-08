@@ -2,16 +2,16 @@ package quest
 
 import "sync"
 
-type TaskStatus int
+type taskStatus int
 
 type Unit struct{}
 
 var None = Unit{}
 
 const (
-	taskPending  TaskStatus = 0
-	taskResolved TaskStatus = 1
-	taskCanceled TaskStatus = 2
+	taskPending  taskStatus = 0
+	taskResolved taskStatus = 1
+	taskCanceled taskStatus = 2
 )
 
 // A read-only interface of the Task.
@@ -71,7 +71,7 @@ type UnitTask = Task[Unit]
 type taskImpl[T any] struct {
 	value        T
 	defaultValue T
-	status       TaskStatus
+	status       taskStatus
 
 	awaitMu   sync.Mutex
 	resolveMu sync.Mutex
@@ -236,8 +236,8 @@ func AwaitAll[T any](tasks ...Awaitable[T]) {
 // It blocks until at least one task has
 // been Resolved() or Cancel().
 func AwaitSome[T any](tasks ...Awaitable[T]) {
-	blocker := DefaultTaskPool.Alloc()
-	defer DefaultTaskPool.Free(blocker)
+	blocker := defaultTaskPool.Alloc()
+	defer defaultTaskPool.Free(blocker)
 
 	for _, t := range tasks {
 		if blocker.IsDone() {
