@@ -1,12 +1,18 @@
 package quest
 
-import "sync"
+import (
+	"errors"
+	"sync"
+	"sync/atomic"
+)
 
 type taskStatus int
 
 type Unit struct{}
 
 var None = Unit{}
+
+var ErrCancelled = errors.New("task cancelled while await")
 
 const (
 	taskPending  taskStatus = 0
@@ -25,6 +31,8 @@ type Awaitable[T any] interface {
 }
 
 type Task[T any] interface {
+	ID() int64
+
 	// Waits for task to finish, and returns a result.
 	// valid is false if it failed or was cancelled.
 	// Blocks the thread until it is available.
@@ -33,6 +41,7 @@ type Task[T any] interface {
 	// Resets the task, making the task available again for
 	// Resolve(), Cancel() and Error().
 	// Clears the errors if any.
+	// Sets panic to false.
 	// success is false if no effect is done.
 	Reset() (success bool)
 
@@ -62,7 +71,13 @@ type Task[T any] interface {
 
 	// Returns true if Resolve(), Cancel() or Fail() is called.
 	IsDone() (done bool)
+
+	// Set value to true to make Await()
+	// panic when Cancelled(). False by default.
+	SetPanic(value bool)
 }
+
+var idGen atomic.Int64
 
 // A unit task represents tasks that doesn't
 // return any result.
@@ -77,6 +92,9 @@ type taskImpl[T any] struct {
 	resolveMu sync.Mutex
 
 	err error
+	id  int64
+
+	panicOnCancel bool
 }
 
 // Regular functions that returns (T, bool)
@@ -91,6 +109,7 @@ func (fn AwaitableFn[T]) Await() (T, bool) {
 func NewTask[T any]() Task[T] {
 	t := &taskImpl[T]{}
 	t.awaitMu.Lock()
+	t.id = idGen.Add(1)
 	return t
 }
 
@@ -98,6 +117,7 @@ func NewTask[T any]() Task[T] {
 func NewUnitTask() UnitTask {
 	t := &taskImpl[Unit]{}
 	t.awaitMu.Lock()
+	t.id = idGen.Add(1)
 	return t
 }
 
@@ -109,6 +129,10 @@ func Start[T any](fn func() T) Task[T] {
 		task.Resolve(fn())
 	}()
 	return task
+}
+
+func (task *taskImpl[T]) ID() int64 {
+	return task.id
 }
 
 func (task *taskImpl[T]) Resolve(value T) bool {
@@ -153,11 +177,18 @@ func (task *taskImpl[T]) IsDone() bool {
 	return task.status != taskPending
 }
 
+func (task *taskImpl[T]) SetPanic(value bool) {
+	task.panicOnCancel = value
+}
+
 func (task *taskImpl[T]) Await() (T, bool) {
 	if task.status == taskPending {
 		task.awaitMu.Lock()
 		//lint:ignore SA2001 Donkeys
 		task.awaitMu.Unlock()
+	}
+	if task.status == taskCanceled && task.panicOnCancel {
+		panic(ErrCancelled)
 	}
 	return task.value, task.status == taskResolved
 }
@@ -177,6 +208,7 @@ func (task *taskImpl[T]) Reset() bool {
 	task.awaitMu.Lock()
 	task.status = taskPending
 	task.value = task.defaultValue
+	task.err = nil
 	return true
 }
 
