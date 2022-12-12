@@ -31,6 +31,7 @@ type Awaitable[T any] interface {
 }
 
 type Task[T any] interface {
+	// Mostly used for debugging.
 	ID() int64
 
 	// Waits for task to finish, and returns a result.
@@ -51,7 +52,9 @@ type Task[T any] interface {
 
 	// Resolves the task result.
 	// success is false if the task was already
-	// resolved or cancelled.
+	// resolved or cancelled. No effect if
+	// task is already Resolve() or Cancel(),
+	// unless Reset() is called.
 	Resolve(result T) (success bool)
 
 	// Cancels the task.
@@ -59,7 +62,7 @@ type Task[T any] interface {
 	// resolved or cancelled.
 	Cancel() (success bool)
 
-	// Cancels the task, then sets the error.
+	// Cancel() the task, then sets the error.
 	// The error can be retrieved with Error()
 	// success is false if the task was already
 	// resolved or cancelled.
@@ -74,6 +77,9 @@ type Task[T any] interface {
 
 	// Set value to true to make Await()
 	// panic when Cancelled(). False by default.
+	// Note: Only affects Await(), nothing else.
+	// Note: it will panic(ErrCanceled), not
+	// the error from Fail().
 	SetPanic(value bool)
 }
 
@@ -84,6 +90,8 @@ var idGen atomic.Int64
 type UnitTask = Task[Unit]
 
 type taskImpl[T any] struct {
+	id int64
+
 	value        T
 	defaultValue T
 	status       taskStatus
@@ -92,7 +100,6 @@ type taskImpl[T any] struct {
 	resolveMu sync.Mutex
 
 	err error
-	id  int64
 
 	panicOnCancel bool
 
@@ -109,6 +116,11 @@ func (fn AwaitableFn[T]) Await() (T, bool) {
 }
 
 // Creates a new task
+// Example:
+//
+//	NewTask[int]()
+//	NewTask[string]()
+//	NewTask[Event]()
 func NewTask[T any]() Task[T] {
 	t := &taskImpl[T]{}
 	t.awaitMu.Lock()
@@ -116,16 +128,25 @@ func NewTask[T any]() Task[T] {
 	return t
 }
 
-// Creates a new void task
+// Creates a new unit task
+// Equivalent to NewTask[Unit]()
+// Unit tasks are resolved with None,
+// e.g. NewUnitTasK().Resolve(None)
 func NewUnitTask() UnitTask {
-	t := &taskImpl[Unit]{}
-	t.awaitMu.Lock()
-	t.id = idGen.Add(1)
-	return t
+	return NewTask[Unit]()
 }
 
-// Start the function fn, and returns as task.
+// Start the function fn, and returns a task.
 // The task is Resolve() when fn returns.
+// The resolved value is what fn returns.
+// Note: it does not use the default pool.
+// Example:
+//
+//	func compute() int {
+//	  // do some lone running operations, then
+//	  return 2+2
+//	}
+//	n := Start(compute).Await() // n == 4
 func Start[T any](fn func() T) Task[T] {
 	task := NewTask[T]()
 	go func() {
@@ -240,6 +261,13 @@ func (task *taskImpl[T]) Reset() bool {
 // The tasks can have different result types.
 // Blocks until all tasks are resolved or cancelled.
 // Check for nils before derefencing the pointers.
+// Example:
+//
+//	var task1 = NewTask[int]()
+//	task1.Resolve(10)
+//	var task2 AwaitableFn[string]= func() (string, bool) { return "apples", true }
+//	a, b := Await2(task1, task2)
+//	// a == 10, b == "apples"
 func Await2[A any, B any](t1 Awaitable[A], t2 Awaitable[B]) (*A, *B) {
 	return asPointer(t1.Await()), asPointer(t2.Await())
 }
@@ -281,6 +309,12 @@ func Await5[A any, B any, C any, D any, E any](
 // the result is not return, and the tasks must have
 // the same types.
 // The result can be checked afterwards with Await().
+// Example:
+//
+//	var task1 = NewTask[int]()
+//	var task2 = NewTask[int]()
+//	var task3 AwaitableFn[int]= func() (string, bool) { return 0, true }
+//	AwaitAll(task1, task2, task3)
 func AwaitAll[T any](tasks ...Awaitable[T]) {
 	for _, t := range tasks {
 		t.Await()
@@ -290,6 +324,11 @@ func AwaitAll[T any](tasks ...Awaitable[T]) {
 // Waits for one task to complete.
 // It blocks until at least one task has
 // been Resolved() or Cancel().
+//
+//	var task1 = NewTask[int]()
+//	var task2 = NewTask[int]()
+//	var task3 AwaitableFn[int]= func() (string, bool) { return 0, true }
+//	AwaitSome(task1, task2, task3)
 func AwaitSome[T any](tasks ...Awaitable[T]) {
 	blocker := defaultTaskPool.Alloc()
 	defer defaultTaskPool.Free(blocker)
