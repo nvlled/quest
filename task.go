@@ -95,6 +95,9 @@ type taskImpl[T any] struct {
 	id  int64
 
 	panicOnCancel bool
+
+	// Currently only used for pools internally.
+	disabled bool
 }
 
 // Regular functions that returns (T, bool)
@@ -136,16 +139,21 @@ func (task *taskImpl[T]) ID() int64 {
 }
 
 func (task *taskImpl[T]) Resolve(value T) bool {
+	if task.disabled || task.status != taskPending {
+		return false
+	}
+
 	task.resolveMu.Lock()
 	defer task.resolveMu.Unlock()
 
-	if task.status != taskPending {
+	if task.disabled || task.status != taskPending {
 		return false
 	}
 
 	task.value = value
 	task.status = taskResolved
 	task.awaitMu.Unlock()
+
 	return true
 }
 
@@ -165,12 +173,14 @@ func (task *taskImpl[T]) Cancel() bool {
 	task.resolveMu.Lock()
 	defer task.resolveMu.Unlock()
 
-	if task.status == taskPending {
-		task.status = taskCanceled
-		task.awaitMu.Unlock()
-		return true
+	if task.status != taskPending {
+		return false
 	}
-	return false
+
+	task.status = taskCanceled
+	task.awaitMu.Unlock()
+
+	return true
 }
 
 func (task *taskImpl[T]) IsDone() bool {
@@ -181,7 +191,18 @@ func (task *taskImpl[T]) SetPanic(value bool) {
 	task.panicOnCancel = value
 }
 
+func (task *taskImpl[T]) enable() {
+	task.disabled = false
+}
+func (task *taskImpl[T]) disable() {
+	task.disabled = true
+}
+
 func (task *taskImpl[T]) Await() (T, bool) {
+	if task.disabled {
+		return task.defaultValue, false
+	}
+
 	if task.status == taskPending {
 		task.awaitMu.Lock()
 		//lint:ignore SA2001 Donkeys
@@ -202,9 +223,11 @@ func (task *taskImpl[T]) AwaitAndReset() (T, bool) {
 func (task *taskImpl[T]) Reset() bool {
 	task.resolveMu.Lock()
 	defer task.resolveMu.Unlock()
-	if task.status == taskPending {
+
+	if task.disabled || task.status == taskPending {
 		return false
 	}
+
 	task.awaitMu.Lock()
 	task.status = taskPending
 	task.value = task.defaultValue

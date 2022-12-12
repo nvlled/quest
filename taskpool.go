@@ -25,13 +25,17 @@ func NewTaskPool[T any](initSize int) *TaskPool[T] {
 
 func (taskPool *TaskPool[T]) Alloc() Task[T] {
 	item := taskPool.syncPool.Get().(*taskImpl[T])
+	item.enable()
 	item.Reset()
 	return item
 }
 
 func (taskPool *TaskPool[T]) Free(item Task[T]) {
-	item.Cancel()
-	taskPool.syncPool.Put(item)
+	if task, ok := item.(*taskImpl[T]); ok {
+		task.disable()
+		task.Cancel()
+		taskPool.syncPool.Put(task)
+	}
 }
 
 var defaultTaskPool = NewTaskPool[any](100)

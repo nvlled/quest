@@ -1,6 +1,7 @@
 package quest
 
 import (
+	"math/rand"
 	"testing"
 	"time"
 )
@@ -185,6 +186,7 @@ func TestAwaitSome(t *testing.T) {
 
 	go func() {
 		t2.Resolve(111)
+		t3.Cancel()
 		done = true
 	}()
 
@@ -218,21 +220,28 @@ func TestReset(t *testing.T) {
 func TestConcurrency(t *testing.T) {
 	t1 := NewTask[int]()
 
-	n := 100
+	n := 10000
 	counter := 0
 	go func() {
 		for i := 0; i < n; i++ {
 			t1.AwaitAndReset()
 			go t1.AwaitAndReset()
+			go t1.Cancel()
 			counter++
 		}
 	}()
 
 	for {
-		time.Sleep(1 * time.Millisecond)
+		randomSleep()
 		t1.Resolve(1)
+		go t1.Resolve(1)
 		if counter == n {
 			break
 		}
 	}
+}
+
+func randomSleep() {
+	ms := 1 + rand.Int31n(999)
+	time.Sleep(time.Duration(ms * int32(time.Microsecond)))
 }
