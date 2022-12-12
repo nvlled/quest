@@ -1,16 +1,18 @@
-package quest
+package quest_test
 
 import (
 	"math/rand"
 	"testing"
 	"time"
+
+	"github.com/nvlled/quest"
 )
 
 func TestUsage(t *testing.T) {
 	// Create three tasks
-	t1 := NewTask[int]()
-	t2 := NewTask[int]()
-	t3 := NewTask[int]()
+	t1 := quest.NewTask[int]()
+	t2 := quest.NewTask[int]()
+	t3 := quest.NewTask[int]()
 
 	// t1 will do some computations
 	go func() {
@@ -75,7 +77,7 @@ func TestUsage(t *testing.T) {
 	}()
 
 	// Await all three tasks to finish
-	r1, r2, r3 := Await3[int, int, int](t1, t2, t3)
+	r1, r2, r3 := quest.Await3[int, int, int](t1, t2, t3)
 	if *r1 != 49995000 {
 		t.Error()
 	}
@@ -88,9 +90,37 @@ func TestUsage(t *testing.T) {
 
 }
 
+func TestUsage2(t *testing.T) {
+	task1 := quest.NewTask[int]()
+	task2 := quest.NewTask[int]()
+
+	go func() {
+		// ... do some computation, then
+		task1.Resolve(1000)
+		task2.Resolve(2000)
+
+		// resolving again won't have any effect
+		task1.Resolve(3000) // doesn't work
+
+		// ... unless the task is reset first
+		task1.Reset()
+		task1.Resolve(3000) // now works
+	}()
+
+	result1, _ := task1.Await()
+	result2, _ := task2.Await()
+
+	// await another result
+	result1, _ = task1.Await()
+
+	if result1 != 3000 || result2 != 2000 {
+		t.Error()
+	}
+}
+
 func TestResolve(t *testing.T) {
-	t1 := NewTask[int]()
-	t2 := NewTask[int]()
+	t1 := quest.NewTask[int]()
+	t2 := quest.NewTask[int]()
 	done := false
 
 	go func() {
@@ -122,7 +152,7 @@ func TestResolve(t *testing.T) {
 }
 
 func TestCancel(t *testing.T) {
-	t1 := NewTask[int]()
+	t1 := quest.NewTask[int]()
 
 	go func() {
 		t1.Cancel()
@@ -136,9 +166,9 @@ func TestCancel(t *testing.T) {
 }
 
 func TestAwait3(t *testing.T) {
-	t1 := NewTask[int]()
-	t2 := NewTask[int]()
-	t3 := NewTask[int]()
+	t1 := quest.NewTask[int]()
+	t2 := quest.NewTask[int]()
+	t3 := quest.NewTask[int]()
 
 	go func() {
 		t1.Resolve(111)
@@ -146,7 +176,7 @@ func TestAwait3(t *testing.T) {
 		t3.Resolve(333)
 	}()
 
-	t1Val, t2Val, t3Val := Await3[int, int, int](t1, t2, t3)
+	t1Val, t2Val, t3Val := quest.Await3[int, int, int](t1, t2, t3)
 	if *t1Val != 111 {
 		t.Error("task 1 has wrong value")
 	}
@@ -159,9 +189,9 @@ func TestAwait3(t *testing.T) {
 }
 
 func TestAwaitAll(t *testing.T) {
-	t1 := NewTask[int]()
-	t2 := NewTask[int]()
-	t3 := NewTask[int]()
+	t1 := quest.NewTask[int]()
+	t2 := quest.NewTask[int]()
+	t3 := quest.NewTask[int]()
 	done := false
 
 	go func() {
@@ -172,16 +202,16 @@ func TestAwaitAll(t *testing.T) {
 		done = true
 	}()
 
-	AwaitAll[int](t1, t2, t3)
+	quest.AwaitAll[int](t1, t2, t3)
 	if !done {
 		t.Error("should block first")
 	}
 }
 
 func TestAwaitSome(t *testing.T) {
-	t1 := NewTask[int]()
-	t2 := NewTask[int]()
-	t3 := NewTask[int]()
+	t1 := quest.NewTask[int]()
+	t2 := quest.NewTask[int]()
+	t3 := quest.NewTask[int]()
 	done := false
 
 	go func() {
@@ -190,14 +220,14 @@ func TestAwaitSome(t *testing.T) {
 		done = true
 	}()
 
-	AwaitSome[int](t1, t2, t3)
+	quest.AwaitSome[int](t1, t2, t3)
 	if !done {
 		t.Error("should block first")
 	}
 }
 
 func TestReset(t *testing.T) {
-	t1 := NewTask[int]()
+	t1 := quest.NewTask[int]()
 
 	go func() {
 		for {
@@ -218,7 +248,7 @@ func TestReset(t *testing.T) {
 }
 
 func TestConcurrency(t *testing.T) {
-	t1 := NewTask[int]()
+	t1 := quest.NewTask[int]()
 
 	n := 10000
 	counter := 0
