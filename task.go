@@ -72,8 +72,19 @@ type Task[T any] interface {
 	// returns nil if there is none.
 	Error() error
 
+	// Returns true if Cancel() or Fail() is called.
+	IsCancelled() (done bool)
+
 	// Returns true if Resolve(), Cancel() or Fail() is called.
 	IsDone() (done bool)
+
+	// Invokes listener only once when Resolve(), Cancel() or Fail() is called.
+	// Multiple listeners are allowed.
+	OnDone(listener func())
+
+	// Invokes listener only once when Cancel() or Fail() is called.
+	// Multiple listeners are allowed.
+	OnCancel(listener func())
 
 	// Set value to true to make Await()
 	// panic when Cancelled(). False by default.
@@ -105,6 +116,9 @@ type taskImpl[T any] struct {
 
 	// Currently only used for pools internally.
 	disabled bool
+
+	doneListeners   []func()
+	cancelListeners []func()
 }
 
 // Regular functions that returns (T, bool)
@@ -175,6 +189,8 @@ func (task *taskImpl[T]) Resolve(value T) bool {
 	task.status = taskResolved
 	task.awaitMu.Unlock()
 
+	go task.notifyDoneListeners()
+
 	return true
 }
 
@@ -201,11 +217,30 @@ func (task *taskImpl[T]) Cancel() bool {
 	task.status = taskCanceled
 	task.awaitMu.Unlock()
 
+	task.notifyDoneListeners()
+	task.notifyCancelListeners()
+
 	return true
+}
+
+func (task *taskImpl[T]) IsCancelled() bool {
+	return task.status == taskCanceled
 }
 
 func (task *taskImpl[T]) IsDone() bool {
 	return task.status != taskPending
+}
+
+func (task *taskImpl[T]) OnDone(listener func()) {
+	task.resolveMu.Lock()
+	defer task.resolveMu.Unlock()
+	task.doneListeners = append(task.doneListeners, listener)
+}
+
+func (task *taskImpl[T]) OnCancel(listener func()) {
+	task.resolveMu.Lock()
+	defer task.resolveMu.Unlock()
+	task.cancelListeners = append(task.cancelListeners, listener)
 }
 
 func (task *taskImpl[T]) SetPanic(value bool) {
@@ -253,7 +288,23 @@ func (task *taskImpl[T]) Reset() bool {
 	task.status = taskPending
 	task.value = task.defaultValue
 	task.err = nil
+	task.doneListeners = task.doneListeners[:0]
+	task.cancelListeners = task.cancelListeners[:0]
 	return true
+}
+
+func (task *taskImpl[T]) notifyDoneListeners() {
+	for _, fn := range task.doneListeners {
+		go fn()
+	}
+	task.doneListeners = task.doneListeners[:0]
+}
+
+func (task *taskImpl[T]) notifyCancelListeners() {
+	for _, fn := range task.cancelListeners {
+		go fn()
+	}
+	task.cancelListeners = task.cancelListeners[:0]
 }
 
 // Waits for all tasks or awaitables to finish.

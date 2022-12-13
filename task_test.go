@@ -250,7 +250,7 @@ func TestReset(t *testing.T) {
 func TestConcurrency(t *testing.T) {
 	t1 := quest.NewTask[int]()
 
-	n := 10000
+	n := 500
 	counter := 0
 	go func() {
 		for i := 0; i < n; i++ {
@@ -269,6 +269,7 @@ func TestConcurrency(t *testing.T) {
 			break
 		}
 	}
+	time.Sleep(50 * time.Millisecond)
 }
 
 func randomSleep() {
