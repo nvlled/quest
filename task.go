@@ -8,9 +8,9 @@ import (
 
 type taskStatus int
 
-type Unit struct{}
+type Void struct{}
 
-var None = Unit{}
+var None = Void{}
 
 var ErrCancelled = errors.New("task cancelled while await")
 
@@ -96,9 +96,9 @@ type Task[T any] interface {
 
 var idGen atomic.Int64
 
-// A unit task represents tasks that doesn't
+// A void task represents tasks that doesn't
 // return any result.
-type UnitTask = Task[Unit]
+type VoidTask = Task[Void]
 
 type taskImpl[T any] struct {
 	id int64
@@ -142,12 +142,12 @@ func NewTask[T any]() Task[T] {
 	return t
 }
 
-// Creates a new unit task
+// Creates a new void task
 // Equivalent to NewTask[Unit]()
 // Unit tasks are resolved with None,
 // e.g. NewUnitTasK().Resolve(None)
-func NewUnitTask() UnitTask {
-	return NewTask[Unit]()
+func NewVoidTask() VoidTask {
+	return NewTask[Void]()
 }
 
 // Start the function fn, and returns a task.

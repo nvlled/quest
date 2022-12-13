@@ -101,20 +101,13 @@ func TestUsage2(t *testing.T) {
 
 		// resolving again won't have any effect
 		task1.Resolve(3000) // doesn't work
-
-		// ... unless the task is reset first
-		task1.Reset()
-		task1.Resolve(3000) // now works
 	}()
 
 	result1, _ := task1.Await()
 	result2, _ := task2.Await()
 
-	// await another result
-	result1, _ = task1.Await()
-
-	if result1 != 3000 || result2 != 2000 {
-		t.Error()
+	if result1 != 1000 || result2 != 2000 {
+		t.Errorf("result1=%v, result2=%v", result1, result2)
 	}
 }
 
@@ -124,11 +117,12 @@ func TestResolve(t *testing.T) {
 	done := false
 
 	go func() {
+		time.Sleep(1 * time.Millisecond)
+		done = true
 		t1.Resolve(123)
 		t2.Resolve(456)
 		t1.Cancel()
 		t2.Cancel()
-		done = true
 	}()
 
 	value, ok := t1.Await()
@@ -195,11 +189,11 @@ func TestAwaitAll(t *testing.T) {
 	done := false
 
 	go func() {
+		done = true
 		time.Sleep(10 * time.Millisecond)
 		t1.Cancel()
 		t2.Resolve(111)
 		t3.Resolve(111)
-		done = true
 	}()
 
 	quest.AwaitAll[int](t1, t2, t3)
@@ -215,9 +209,9 @@ func TestAwaitSome(t *testing.T) {
 	done := false
 
 	go func() {
+		done = true
 		t2.Resolve(111)
 		t3.Cancel()
-		done = true
 	}()
 
 	quest.AwaitSome[int](t1, t2, t3)
