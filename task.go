@@ -51,22 +51,16 @@ type Task[T any] interface {
 	AwaitAndReset() (result T, valid bool)
 
 	// Resolves the task result.
-	// success is false if the task was already
-	// resolved or cancelled. No effect if
-	// task is already Resolve() or Cancel(),
+	// No effect if task is already Resolve() or Cancel(),
 	// unless Reset() is called.
-	Resolve(result T) (success bool)
+	Resolve(result T)
 
 	// Cancels the task.
-	// success is false if the task was already
-	// resolved or cancelled.
-	Cancel() (success bool)
+	Cancel()
 
 	// Cancel() the task, then sets the error.
 	// The error can be retrieved with Error()
-	// success is false if the task was already
-	// resolved or cancelled.
-	Fail(error) (success bool)
+	Fail(error)
 
 	// Returns the error set by Fail().
 	// returns nil if there is none.
@@ -173,16 +167,16 @@ func (task *taskImpl[T]) ID() int64 {
 	return task.id
 }
 
-func (task *taskImpl[T]) Resolve(value T) bool {
+func (task *taskImpl[T]) Resolve(value T) {
 	if task.disabled || task.status != taskPending {
-		return false
+		return
 	}
 
 	task.resolveMu.Lock()
 	defer task.resolveMu.Unlock()
 
 	if task.disabled || task.status != taskPending {
-		return false
+		return
 	}
 
 	task.value = value
@@ -190,23 +184,23 @@ func (task *taskImpl[T]) Resolve(value T) bool {
 	task.awaitMu.Unlock()
 
 	go task.notifyDoneListeners()
-
-	return true
 }
 
 func (task *taskImpl[T]) Error() error {
 	return task.err
 }
 
-func (task *taskImpl[T]) Fail(err error) bool {
-	if task.Cancel() {
+func (task *taskImpl[T]) Fail(err error) {
+	if task.cancel() {
 		task.err = err
-		return true
 	}
-	return false
 }
 
-func (task *taskImpl[T]) Cancel() bool {
+func (task *taskImpl[T]) Cancel() {
+	task.cancel()
+}
+
+func (task *taskImpl[T]) cancel() bool {
 	task.resolveMu.Lock()
 	defer task.resolveMu.Unlock()
 
