@@ -12,7 +12,7 @@ func NewTaskPool[T any](initSize int) *TaskPool[T] {
 	pool := &TaskPool[T]{
 		syncPool: sync.Pool{
 			New: func() any {
-				return new(taskImpl[any])
+				return NewTask[T]()
 			},
 		},
 	}

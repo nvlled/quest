@@ -6,13 +6,23 @@ import (
 	"sync/atomic"
 )
 
-type taskStatus int
-
+// A type representing none.
+// Used on tasks that doesn't return
+// value: Task[Void]
 type Void struct{}
 
+// That value that represents nothing.
+// Similar to nil, but safer.
 var None = Void{}
 
+// When task is called with SetPanic(true),
+// this error is thrown (panic) while blocked
+// on Await().
+//
+// Note: no other methods throw this error.
 var ErrCancelled = errors.New("task cancelled while await")
+
+type taskStatus int
 
 const (
 	taskPending  taskStatus = 0
