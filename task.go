@@ -133,6 +133,13 @@ func (fn AwaitableFn[T]) Await() (T, bool) {
 	return fn()
 }
 
+func newTask[T any]() *taskImpl[T] {
+	t := &taskImpl[T]{}
+	t.awaitMu.Lock()
+	t.id = idGen.Add(1)
+	return t
+}
+
 // Creates a new task
 // Example:
 //
@@ -140,18 +147,15 @@ func (fn AwaitableFn[T]) Await() (T, bool) {
 //	NewTask[string]()
 //	NewTask[Event]()
 func NewTask[T any]() Task[T] {
-	t := &taskImpl[T]{}
-	t.awaitMu.Lock()
-	t.id = idGen.Add(1)
-	return t
+	return newTask[T]()
 }
 
 // Creates a new void task
-// Equivalent to NewTask[Unit]()
-// Unit tasks are resolved with None,
-// e.g. NewUnitTasK().Resolve(None)
+// Equivalent to NewTask[Void]()
+// Void tasks are resolved with None,
+// e.g. NewVoidTask().Resolve(None)
 func NewVoidTask() VoidTask {
-	return NewTask[Void]()
+	return newTask[Void]()
 }
 
 // Start the function fn, and returns a task.
@@ -385,8 +389,8 @@ func AwaitAll[T any](tasks ...Awaitable[T]) {
 //	var task3 AwaitableFn[int]= func() (string, bool) { return 0, true }
 //	AwaitSome(task1, task2, task3)
 func AwaitSome[T any](tasks ...Awaitable[T]) {
-	blocker := defaultTaskPool.Alloc()
-	defer defaultTaskPool.Free(blocker)
+	blocker := AllocTask[Void]()
+	defer FreeTask(blocker)
 
 	for _, t := range tasks {
 		if blocker.IsDone() {
@@ -394,7 +398,7 @@ func AwaitSome[T any](tasks ...Awaitable[T]) {
 		}
 		go func(t Awaitable[T]) {
 			t.Await()
-			blocker.Resolve(1)
+			blocker.Resolve(None)
 		}(t)
 	}
 

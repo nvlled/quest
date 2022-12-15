@@ -1,41 +1,35 @@
 package quest
 
-import "sync"
+import (
+	"github.com/nvlled/mud"
+)
 
-// An object pool for tasks. Use only
-// when gc is an issue.
-type TaskPool[T any] struct {
-	syncPool sync.Pool
+func init() {
+	PreAllocTasks[Void](100)
 }
 
-func NewTaskPool[T any](initSize int) *TaskPool[T] {
-	pool := &TaskPool[T]{
-		syncPool: sync.Pool{
-			New: func() any {
-				return NewTask[T]()
-			},
-		},
+// Pre-allocate a number of tasks of the given type.
+func PreAllocTasks[T any](numTasks int) {
+	mud.PreAlloc(taskPool, newTask[T], numTasks)
+}
+
+// Allocate a task using an object pool.
+// Free the task afterwards with Free().
+// Use only when gc is a concern.
+func AllocTask[T any]() Task[T] {
+	task := mud.Alloc(taskPool, newTask[T])
+	task.disabled = false
+	task.Reset()
+	return task
+}
+
+// Free a task that was previously Alloc()'d.
+func FreeTask[T any](task Task[T]) {
+	object, ok := task.(*taskImpl[T])
+	if !ok {
+		return
 	}
-	for i := 0; i < initSize; i++ {
-		pool.Free(NewTask[T]())
-	}
-
-	return pool
+	mud.Free(taskPool, object)
 }
 
-func (taskPool *TaskPool[T]) Alloc() Task[T] {
-	item := taskPool.syncPool.Get().(*taskImpl[T])
-	item.enable()
-	item.Reset()
-	return item
-}
-
-func (taskPool *TaskPool[T]) Free(item Task[T]) {
-	if task, ok := item.(*taskImpl[T]); ok {
-		task.disable()
-		task.Cancel()
-		taskPool.syncPool.Put(task)
-	}
-}
-
-var defaultTaskPool = NewTaskPool[any](100)
+var taskPool = mud.NewPool()
