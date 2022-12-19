@@ -49,6 +49,10 @@ type Task[T any] interface {
 	// Blocks the thread until it is available.
 	Await() (result T, valid bool)
 
+	// Similar to Await(), but will not panic
+	// even if called with SetPanic(true).
+	Anticipate() (result T, valid bool)
+
 	// Resets the task, making the task available again for
 	// Resolve(), Cancel() and Error().
 	// Clears the errors if any.
@@ -274,6 +278,15 @@ func (task *taskImpl[T]) Await() (T, bool) {
 	}
 	if task.status == taskCanceled && task.panicOnCancel {
 		panic(ErrCancelled)
+	}
+	return task.value, task.status == taskResolved
+}
+
+func (task *taskImpl[T]) Anticipate() (T, bool) {
+	if task.status == taskPending {
+		task.awaitMu.Lock()
+		//lint:ignore SA2001 Donkeys
+		task.awaitMu.Unlock()
 	}
 	return task.value, task.status == taskResolved
 }
