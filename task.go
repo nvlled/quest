@@ -2,6 +2,7 @@ package quest
 
 import (
 	"errors"
+	"log"
 	"sync"
 	"sync/atomic"
 )
@@ -21,6 +22,8 @@ var None = Void{}
 //
 // Note: no other methods throw this error.
 var ErrCancelled = errors.New("task cancelled while await")
+
+var WarnDisabled = "[WARN] Task is used while it is freed on pool. This could lead to unexpected behavior."
 
 type taskStatus int
 
@@ -122,11 +125,12 @@ type taskImpl[T any] struct {
 
 	panicOnCancel bool
 
-	// Currently only used for pools internally.
-	disabled bool
-
 	doneListeners   []func()
 	cancelListeners []func()
+
+	// A flag used to indicate if the task
+	// is currently freed in the task pool.
+	disabled bool
 }
 
 // Regular functions that returns (T, bool)
@@ -186,22 +190,28 @@ func (task *taskImpl[T]) ID() int64 {
 }
 
 func (task *taskImpl[T]) Resolve(value T) {
-	if task.disabled || task.status != taskPending {
+	if task.disabled {
+		log.Print(WarnDisabled)
+		return
+	}
+
+	if task.status != taskPending {
 		return
 	}
 
 	task.resolveMu.Lock()
-	defer task.resolveMu.Unlock()
 
-	if task.disabled || task.status != taskPending {
+	if task.status != taskPending {
+		task.resolveMu.Unlock()
 		return
 	}
 
 	task.value = value
 	task.status = taskResolved
 	task.awaitMu.Unlock()
+	task.resolveMu.Unlock()
 
-	go task.notifyDoneListeners()
+	task.notifyDoneListeners()
 }
 
 func (task *taskImpl[T]) Error() error {
@@ -220,14 +230,15 @@ func (task *taskImpl[T]) Cancel() {
 
 func (task *taskImpl[T]) cancel() bool {
 	task.resolveMu.Lock()
-	defer task.resolveMu.Unlock()
 
 	if task.status != taskPending {
+		task.resolveMu.Unlock()
 		return false
 	}
 
 	task.status = taskCanceled
 	task.awaitMu.Unlock()
+	task.resolveMu.Unlock()
 
 	task.notifyDoneListeners()
 	task.notifyCancelListeners()
@@ -244,33 +255,34 @@ func (task *taskImpl[T]) IsDone() bool {
 }
 
 func (task *taskImpl[T]) OnDone(listener func()) {
+	if task.disabled {
+		log.Print(WarnDisabled)
+		return
+	}
 	task.resolveMu.Lock()
 	defer task.resolveMu.Unlock()
 	task.doneListeners = append(task.doneListeners, listener)
 }
 
 func (task *taskImpl[T]) OnCancel(listener func()) {
+	if task.disabled {
+		log.Print(WarnDisabled)
+		return
+	}
 	task.resolveMu.Lock()
 	defer task.resolveMu.Unlock()
 	task.cancelListeners = append(task.cancelListeners, listener)
 }
 
 func (task *taskImpl[T]) SetPanic(value bool) {
+	if task.disabled {
+		log.Print(WarnDisabled)
+		return
+	}
 	task.panicOnCancel = value
 }
 
-func (task *taskImpl[T]) enable() {
-	task.disabled = false
-}
-func (task *taskImpl[T]) disable() {
-	task.disabled = true
-}
-
 func (task *taskImpl[T]) Await() (T, bool) {
-	if task.disabled {
-		return task.defaultValue, false
-	}
-
 	if task.status == taskPending {
 		task.awaitMu.Lock()
 		//lint:ignore SA2001 Donkeys
@@ -298,10 +310,14 @@ func (task *taskImpl[T]) AwaitAndReset() (T, bool) {
 }
 
 func (task *taskImpl[T]) Reset() bool {
+	if task.disabled {
+		log.Print(WarnDisabled)
+		return false
+	}
 	task.resolveMu.Lock()
 	defer task.resolveMu.Unlock()
 
-	if task.disabled || task.status == taskPending {
+	if task.status == taskPending {
 		return false
 	}
 
@@ -311,19 +327,31 @@ func (task *taskImpl[T]) Reset() bool {
 	task.err = nil
 	task.doneListeners = task.doneListeners[:0]
 	task.cancelListeners = task.cancelListeners[:0]
+	task.panicOnCancel = false
 	return true
+}
+
+func (task *taskImpl[T]) enable() {
+	task.resolveMu.Lock()
+	defer task.resolveMu.Unlock()
+	task.disabled = false
+}
+func (task *taskImpl[T]) disable() {
+	task.resolveMu.Lock()
+	defer task.resolveMu.Unlock()
+	task.disabled = true
 }
 
 func (task *taskImpl[T]) notifyDoneListeners() {
 	for _, fn := range task.doneListeners {
-		go fn()
+		fn()
 	}
 	task.doneListeners = task.doneListeners[:0]
 }
 
 func (task *taskImpl[T]) notifyCancelListeners() {
 	for _, fn := range task.cancelListeners {
-		go fn()
+		fn()
 	}
 	task.cancelListeners = task.cancelListeners[:0]
 }
@@ -411,7 +439,9 @@ func AwaitSome[T any](tasks ...Awaitable[T]) {
 		}
 		go func(t Awaitable[T]) {
 			t.Await()
-			blocker.Resolve(None)
+			if !blocker.IsDone() {
+				blocker.Resolve(None)
+			}
 		}(t)
 	}
 

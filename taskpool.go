@@ -4,6 +4,8 @@ import (
 	"github.com/nvlled/mud"
 )
 
+var taskPool = mud.NewPool()
+
 func init() {
 	PreAllocTasks[Void](100)
 }
@@ -18,7 +20,7 @@ func PreAllocTasks[T any](numTasks int) {
 // Use only when gc is a concern.
 func AllocTask[T any]() Task[T] {
 	task := mud.Alloc(taskPool, newTask[T])
-	task.disabled = false
+	task.enable()
 	task.Reset()
 	return task
 }
@@ -29,7 +31,7 @@ func FreeTask[T any](task Task[T]) {
 	if !ok {
 		return
 	}
+	object.disable()
+	object.Cancel()
 	mud.Free(taskPool, object)
 }
-
-var taskPool = mud.NewPool()
