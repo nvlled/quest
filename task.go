@@ -118,7 +118,7 @@ type taskImpl[T any] struct {
 	defaultValue T
 	status       taskStatus
 
-	awaitMu   sync.Mutex
+	awaitMu   sync.RWMutex
 	resolveMu sync.Mutex
 
 	err error
@@ -284,9 +284,9 @@ func (task *taskImpl[T]) SetPanic(value bool) {
 
 func (task *taskImpl[T]) Await() (T, bool) {
 	if task.status == taskPending {
-		task.awaitMu.Lock()
+		task.awaitMu.RLock()
 		//lint:ignore SA2001 Donkeys
-		task.awaitMu.Unlock()
+		task.awaitMu.RUnlock()
 	}
 	if task.status == taskCanceled && task.panicOnCancel {
 		panic(ErrCancelled)
@@ -296,9 +296,9 @@ func (task *taskImpl[T]) Await() (T, bool) {
 
 func (task *taskImpl[T]) Anticipate() (T, bool) {
 	if task.status == taskPending {
-		task.awaitMu.Lock()
+		task.awaitMu.RLock()
 		//lint:ignore SA2001 Donkeys
-		task.awaitMu.Unlock()
+		task.awaitMu.RUnlock()
 	}
 	return task.value, task.status == taskResolved
 }
