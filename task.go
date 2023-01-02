@@ -52,6 +52,8 @@ type Task[T any] interface {
 	// Blocks the thread until it is available.
 	Await() (result T, valid bool)
 
+	Yield() bool
+
 	// Similar to Await(), but will not panic
 	// even if called with SetPanic(true).
 	Anticipate() (result T, valid bool)
@@ -301,6 +303,22 @@ func (task *taskImpl[T]) Anticipate() (T, bool) {
 		task.awaitMu.RUnlock()
 	}
 	return task.value, task.status == taskResolved
+}
+
+func (task *taskImpl[T]) Yield() bool {
+	_, ok := task.Await()
+	if !ok {
+		return false
+	}
+
+	task.resolveMu.Lock()
+	defer task.resolveMu.Unlock()
+
+	task.awaitMu.Lock()
+	task.status = taskPending
+	task.value = task.defaultValue
+
+	return true
 }
 
 func (task *taskImpl[T]) AwaitAndReset() (T, bool) {

@@ -7,7 +7,7 @@ import (
 var taskPool = mud.NewPool()
 
 func init() {
-	PreAllocTasks[Void](100)
+	PreAllocTasks[Void](250)
 }
 
 // Pre-allocate a number of tasks of the given type.
