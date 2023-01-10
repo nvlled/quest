@@ -2,6 +2,7 @@ package quest_test
 
 import (
 	"math/rand"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -244,14 +245,14 @@ func TestReset(t *testing.T) {
 func TestConcurrency(t *testing.T) {
 	t1 := quest.NewTask[int]()
 
-	n := 500
-	counter := 0
+	n := int32(500)
+	counter := atomic.Int32{}
 	go func() {
-		for i := 0; i < n; i++ {
+		for i := int32(0); i < n; i++ {
 			t1.AwaitAndReset()
 			go t1.AwaitAndReset()
 			go t1.Cancel()
-			counter++
+			counter.Add(1)
 		}
 	}()
 
@@ -259,7 +260,7 @@ func TestConcurrency(t *testing.T) {
 		randomSleep()
 		t1.Resolve(1)
 		go t1.Resolve(1)
-		if counter == n {
+		if counter.Load() == n {
 			break
 		}
 	}

@@ -25,7 +25,7 @@ var ErrCancelled = errors.New("task cancelled while await")
 
 var WarnDisabled = "[WARN] Task is used while it is freed on pool. This could lead to unexpected behavior."
 
-type taskStatus int
+type taskStatus = int32
 
 const (
 	taskPending  taskStatus = 0
@@ -91,14 +91,6 @@ type Task[T any] interface {
 	// Returns true if Resolve(), Cancel() or Fail() is called.
 	IsDone() (done bool)
 
-	// Invokes listener only once when Resolve(), Cancel() or Fail() is called.
-	// Multiple listeners are allowed.
-	OnDone(listener func())
-
-	// Invokes listener only once when Cancel() or Fail() is called.
-	// Multiple listeners are allowed.
-	OnCancel(listener func())
-
 	// Set value to true to make Await()
 	// panic when Cancelled(). False by default.
 	// Note: Only affects Await(), nothing else.
@@ -118,21 +110,18 @@ type taskImpl[T any] struct {
 
 	value        T
 	defaultValue T
-	status       taskStatus
+	status       atomic.Int32
 
 	awaitMu   sync.RWMutex
 	resolveMu sync.Mutex
 
 	err error
 
-	panicOnCancel bool
-
-	doneListeners   []func()
-	cancelListeners []func()
+	panicOnCancel atomic.Bool
 
 	// A flag used to indicate if the task
 	// is currently freed in the task pool.
-	disabled bool
+	disabled atomic.Bool
 }
 
 // Regular functions that returns (T, bool)
@@ -192,28 +181,27 @@ func (task *taskImpl[T]) ID() int64 {
 }
 
 func (task *taskImpl[T]) Resolve(value T) {
-	if task.disabled {
+	if task.disabled.Load() {
 		log.Print(WarnDisabled)
 		return
 	}
 
-	if task.status != taskPending {
+	if task.status.Load() != taskPending {
 		return
 	}
 
 	task.resolveMu.Lock()
 
-	if task.status != taskPending {
+	if task.status.Load() != taskPending {
 		task.resolveMu.Unlock()
 		return
 	}
 
 	task.value = value
-	task.status = taskResolved
+	task.status.Store(taskResolved)
 	task.awaitMu.Unlock()
 	task.resolveMu.Unlock()
 
-	task.notifyDoneListeners()
 }
 
 func (task *taskImpl[T]) Error() error {
@@ -233,76 +221,54 @@ func (task *taskImpl[T]) Cancel() {
 func (task *taskImpl[T]) cancel() bool {
 	task.resolveMu.Lock()
 
-	if task.status != taskPending {
+	if task.status.Load() != taskPending {
 		task.resolveMu.Unlock()
 		return false
 	}
 
-	task.status = taskCanceled
+	task.status.Store(taskCanceled)
 	task.awaitMu.Unlock()
 	task.resolveMu.Unlock()
-
-	task.notifyDoneListeners()
-	task.notifyCancelListeners()
 
 	return true
 }
 
 func (task *taskImpl[T]) IsCancelled() bool {
-	return task.status == taskCanceled
+	return task.status.Load() == taskCanceled
 }
 
 func (task *taskImpl[T]) IsDone() bool {
-	return task.status != taskPending
-}
-
-func (task *taskImpl[T]) OnDone(listener func()) {
-	if task.disabled {
-		log.Print(WarnDisabled)
-		return
-	}
-	task.resolveMu.Lock()
-	defer task.resolveMu.Unlock()
-	task.doneListeners = append(task.doneListeners, listener)
-}
-
-func (task *taskImpl[T]) OnCancel(listener func()) {
-	if task.disabled {
-		log.Print(WarnDisabled)
-		return
-	}
-	task.resolveMu.Lock()
-	defer task.resolveMu.Unlock()
-	task.cancelListeners = append(task.cancelListeners, listener)
+	return task.status.Load() != taskPending
 }
 
 func (task *taskImpl[T]) SetPanic(value bool) {
-	if task.disabled {
+	if task.disabled.Load() {
 		log.Print(WarnDisabled)
 		return
 	}
-	task.panicOnCancel = value
+	task.panicOnCancel.Store(value)
 }
 
 func (task *taskImpl[T]) Await() (T, bool) {
-	if task.status == taskPending {
+	if task.status.Load() == taskPending {
 		task.awaitMu.RLock()
 		//lint:ignore SA2001 Donkeys
 		task.awaitMu.RUnlock()
 	}
-	if task.status == taskCanceled && task.panicOnCancel {
+	if task.status.Load() == taskCanceled && task.panicOnCancel.Load() {
 		panic(ErrCancelled)
 	}
-	return task.value, task.status == taskResolved
+
+	return task.getValue(), task.status.Load() == taskResolved
 }
 
 func (task *taskImpl[T]) Anticipate() (T, bool) {
-	if task.status == taskPending {
+	if task.status.Load() == taskPending {
 		task.awaitMu.RLock()
 		//lint:ignore SA2001 Donkeys
 		task.awaitMu.RUnlock()
 	}
-	return task.value, task.status == taskResolved
+	return task.getValue(), task.status.Load() == taskResolved
 }
 
 func (task *taskImpl[T]) Yield() bool {
@@ -315,7 +281,9 @@ func (task *taskImpl[T]) Yield() bool {
 	defer task.resolveMu.Unlock()
 
 	task.awaitMu.Lock()
-	task.status = taskPending
+	if task.status.Load() != taskCanceled {
+		task.status.Store(taskPending)
+	}
 	task.value = task.defaultValue
 
 	return true
@@ -328,50 +296,40 @@ func (task *taskImpl[T]) AwaitAndReset() (T, bool) {
 }
 
 func (task *taskImpl[T]) Reset() bool {
-	if task.disabled {
+	if task.disabled.Load() {
 		log.Print(WarnDisabled)
 		return false
 	}
 	task.resolveMu.Lock()
 	defer task.resolveMu.Unlock()
 
-	if task.status == taskPending {
+	if task.status.Load() == taskPending {
 		return false
 	}
 
 	task.awaitMu.Lock()
-	task.status = taskPending
+	task.status.Store(taskPending)
 	task.value = task.defaultValue
 	task.err = nil
-	task.doneListeners = task.doneListeners[:0]
-	task.cancelListeners = task.cancelListeners[:0]
-	task.panicOnCancel = false
+	task.panicOnCancel.Store(false)
 	return true
 }
 
 func (task *taskImpl[T]) enable() {
 	task.resolveMu.Lock()
 	defer task.resolveMu.Unlock()
-	task.disabled = false
+	task.disabled.Store(false)
 }
 func (task *taskImpl[T]) disable() {
 	task.resolveMu.Lock()
 	defer task.resolveMu.Unlock()
-	task.disabled = true
+	task.disabled.Store(true)
 }
 
-func (task *taskImpl[T]) notifyDoneListeners() {
-	for _, fn := range task.doneListeners {
-		fn()
-	}
-	task.doneListeners = task.doneListeners[:0]
-}
-
-func (task *taskImpl[T]) notifyCancelListeners() {
-	for _, fn := range task.cancelListeners {
-		fn()
-	}
-	task.cancelListeners = task.cancelListeners[:0]
+func (task *taskImpl[T]) getValue() T {
+	task.resolveMu.Lock()
+	defer task.resolveMu.Unlock()
+	return task.value
 }
 
 // Waits for all tasks or awaitables to finish.
