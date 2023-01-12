@@ -238,7 +238,8 @@ func TestReset(t *testing.T) {
 	}()
 
 	for i := 0; i < 100; i++ {
-		t1.AwaitAndReset()
+		t1.Await()
+		t1.Reset()
 	}
 }
 
@@ -249,8 +250,8 @@ func TestConcurrency(t *testing.T) {
 	counter := atomic.Int32{}
 	go func() {
 		for i := int32(0); i < n; i++ {
-			t1.AwaitAndReset()
-			go t1.AwaitAndReset()
+			t1.Await()
+			go t1.Reset()
 			go t1.Cancel()
 			counter.Add(1)
 		}

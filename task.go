@@ -2,7 +2,6 @@ package quest
 
 import (
 	"errors"
-	"log"
 	"sync"
 	"sync/atomic"
 )
@@ -22,8 +21,6 @@ var None = Void{}
 //
 // Note: no other methods throw this error.
 var ErrCancelled = errors.New("task cancelled while await")
-
-var WarnDisabled = "[WARN] Task is used while it is freed on pool. This could lead to unexpected behavior."
 
 type taskStatus = int32
 
@@ -52,22 +49,12 @@ type Task[T any] interface {
 	// Blocks the thread until it is available.
 	Await() (result T, valid bool)
 
-	Yield() bool
-
-	// Similar to Await(), but will not panic
-	// even if called with SetPanic(true).
-	Anticipate() (result T, valid bool)
-
 	// Resets the task, making the task available again for
 	// Resolve(), Cancel() and Error().
 	// Clears the errors if any.
 	// Sets panic to false.
 	// success is false if no effect is done.
 	Reset() (success bool)
-
-	// Calls Await() then Reset()
-	// Blocks the thread until it is available.
-	AwaitAndReset() (result T, valid bool)
 
 	// Resolves the task result.
 	// No effect if task is already Resolve() or Cancel(),
@@ -90,13 +77,6 @@ type Task[T any] interface {
 
 	// Returns true if Resolve(), Cancel() or Fail() is called.
 	IsDone() (done bool)
-
-	// Set value to true to make Await()
-	// panic when Cancelled(). False by default.
-	// Note: Only affects Await(), nothing else.
-	// Note: it will panic(ErrCanceled), not
-	// the error from Fail().
-	SetPanic(value bool)
 }
 
 var idGen atomic.Int64
@@ -110,18 +90,12 @@ type taskImpl[T any] struct {
 
 	value        T
 	defaultValue T
-	status       atomic.Int32
+	status       taskStatus
 
 	awaitMu   sync.RWMutex
 	resolveMu sync.Mutex
 
 	err error
-
-	panicOnCancel atomic.Bool
-
-	// A flag used to indicate if the task
-	// is currently freed in the task pool.
-	disabled atomic.Bool
 }
 
 // Regular functions that returns (T, bool)
@@ -181,26 +155,16 @@ func (task *taskImpl[T]) ID() int64 {
 }
 
 func (task *taskImpl[T]) Resolve(value T) {
-	if task.disabled.Load() {
-		log.Print(WarnDisabled)
-		return
-	}
-
-	if task.status.Load() != taskPending {
-		return
-	}
-
 	task.resolveMu.Lock()
+	defer task.resolveMu.Unlock()
 
-	if task.status.Load() != taskPending {
-		task.resolveMu.Unlock()
+	if task.status != taskPending {
 		return
 	}
 
 	task.value = value
-	task.status.Store(taskResolved)
+	task.status = taskResolved
 	task.awaitMu.Unlock()
-	task.resolveMu.Unlock()
 
 }
 
@@ -220,116 +184,61 @@ func (task *taskImpl[T]) Cancel() {
 
 func (task *taskImpl[T]) cancel() bool {
 	task.resolveMu.Lock()
+	defer task.resolveMu.Unlock()
 
-	if task.status.Load() != taskPending {
-		task.resolveMu.Unlock()
+	if task.status != taskPending {
 		return false
 	}
 
-	task.status.Store(taskCanceled)
+	task.status = taskCanceled
 	task.awaitMu.Unlock()
-	task.resolveMu.Unlock()
 
 	return true
 }
 
 func (task *taskImpl[T]) IsCancelled() bool {
-	return task.status.Load() == taskCanceled
+	task.resolveMu.Lock()
+	defer task.resolveMu.Unlock()
+	return task.status == taskCanceled
 }
 
 func (task *taskImpl[T]) IsDone() bool {
-	return task.status.Load() != taskPending
-}
-
-func (task *taskImpl[T]) SetPanic(value bool) {
-	if task.disabled.Load() {
-		log.Print(WarnDisabled)
-		return
-	}
-	task.panicOnCancel.Store(value)
+	task.resolveMu.Lock()
+	defer task.resolveMu.Unlock()
+	return task.status != taskPending
 }
 
 func (task *taskImpl[T]) Await() (T, bool) {
-	if task.status.Load() == taskPending {
+	task.resolveMu.Lock()
+	if task.status == taskPending {
+		task.resolveMu.Unlock()
 		task.awaitMu.RLock()
 		//lint:ignore SA2001 Donkeys
 		task.awaitMu.RUnlock()
-	}
-	if task.status.Load() == taskCanceled && task.panicOnCancel.Load() {
-		panic(ErrCancelled)
-	}
-
-	return task.getValue(), task.status.Load() == taskResolved
-}
-
-func (task *taskImpl[T]) Anticipate() (T, bool) {
-	if task.status.Load() == taskPending {
-		task.awaitMu.RLock()
-		//lint:ignore SA2001 Donkeys
-		task.awaitMu.RUnlock()
-	}
-	return task.getValue(), task.status.Load() == taskResolved
-}
-
-func (task *taskImpl[T]) Yield() bool {
-	_, ok := task.Await()
-	if !ok {
-		return false
+	} else {
+		task.resolveMu.Unlock()
 	}
 
 	task.resolveMu.Lock()
 	defer task.resolveMu.Unlock()
 
-	task.awaitMu.Lock()
-	if task.status.Load() != taskCanceled {
-		task.status.Store(taskPending)
-	}
-	task.value = task.defaultValue
-
-	return true
-}
-
-func (task *taskImpl[T]) AwaitAndReset() (T, bool) {
-	value, ok := task.Await()
-	task.Reset()
-	return value, ok
+	return task.value, task.status == taskResolved
 }
 
 func (task *taskImpl[T]) Reset() bool {
-	if task.disabled.Load() {
-		log.Print(WarnDisabled)
-		return false
-	}
 	task.resolveMu.Lock()
 	defer task.resolveMu.Unlock()
 
-	if task.status.Load() == taskPending {
+	if task.status == taskPending {
 		return false
 	}
 
 	task.awaitMu.Lock()
-	task.status.Store(taskPending)
+	task.status = taskPending
 	task.value = task.defaultValue
 	task.err = nil
-	task.panicOnCancel.Store(false)
+
 	return true
-}
-
-func (task *taskImpl[T]) enable() {
-	task.resolveMu.Lock()
-	defer task.resolveMu.Unlock()
-	task.disabled.Store(false)
-}
-func (task *taskImpl[T]) disable() {
-	task.resolveMu.Lock()
-	defer task.resolveMu.Unlock()
-	task.disabled.Store(true)
-}
-
-func (task *taskImpl[T]) getValue() T {
-	task.resolveMu.Lock()
-	defer task.resolveMu.Unlock()
-	return task.value
 }
 
 // Waits for all tasks or awaitables to finish.

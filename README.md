@@ -3,14 +3,17 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/nvlled/quest.svg)](https://pkg.go.dev/github.com/nvlled/quest)
 
 This go library provides async features similar to C#'s Task or Javascript's
-async/promise.
+async/promise. **Caveat: not tested thoroughly**
 
 ## [Documentation](https://pkg.go.dev/github.com/nvlled/quest)
 
 ## Purpose and motivation
 
-This project is initially written for a [coroutine](#TODO) library,
+This project is initially written for a library,
 but it seems to be general enough as a standalone library itself.
+
+**Update: I decided to use a wrapper for channel instead for the coroutine library. Task isn't suitable for yielding coroutines since the methods aren't atomic enough, and incurs a bit of overhead in the game loop. But for other purposes, this library still could be useful.**
+
 Go channels were previously considered, but channels are
 
 - prone to deadlocks
@@ -66,5 +69,9 @@ func getSomethingAlt(id string) any {
 }
 ```
 
-For more examples, see test files. See also [coroutine](#TODO)
-for actual usage.
+For more examples, see test files.
+
+## Alternatives
+
+[conc](https://github.com/sourcegraph/conc) - a different approach, not exactly an alternative, but it addresses the same
+problem space with regards to go's concurrency primitives.
